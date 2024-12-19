@@ -21,6 +21,8 @@ from env_goal_3rb import Env # 環境ファイル
 import net_goal_3rb # ネットワーク
 import greedy_goal_3rb # 探索手法
 
+from stable_baselines3 import SAC
+
 class ReinforceAgent():
     def __init__(self):
 
