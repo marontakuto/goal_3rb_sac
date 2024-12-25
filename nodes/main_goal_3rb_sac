@@ -27,9 +27,20 @@ class ReinforceAgent():
         self.current_dirPath = os.path.dirname(os.path.realpath(__file__))  # カレントディレクトリのパス
         self.dirPath = self.current_dirPath.replace('/nodes', '/save_model')
         
+        self.mode = 'sim'
+        self.load_model = False
+        self.load_rbuf = False
+        self.episode = 30
+        self.episode_step = 500
+        self.lidar_num = 72
+        self.save_rbuf = False
+        self.recovery = False
+        self.screen_list = [0]
         self.gpu = 0  # GPUを使用する場合は0に設定、GPUがない場合は-1
         action_dim = 2  # 直進速度と回転速度の2つの出力
         action_space = np.array([-1.0, 1.0, -math.pi, math.pi])
+
+        self.robot_n = rospy.get_param('robot_num')
         
         # GPUを使用するかどうかを決定
         device = torch.device('cuda' if torch.cuda.is_available() and self.gpu != -1 else 'cpu')
@@ -176,6 +187,8 @@ class ReinforceAgent():
 
 # メイン
 if __name__ == '__main__':
-    rospy.init_node('main_goal_3rb')
+    rospy.init_node('main_goal_3rb_sac')
+    trials = 55
     agent = ReinforceAgent()
+    env = Env()
     agent.train()
