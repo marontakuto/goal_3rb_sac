@@ -13,48 +13,13 @@ sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 from datetime import datetime
 import torch.nn.functional as F # 活性化関数
 import sqlite3
+import math
 # 強化学習ライブラリ
 import pfrl
 import torch
 # 使用自作ファイル
 from env_goal_3rb_sac import Env # 環境ファイル
 import net_goal_3rb_sac # ネットワーク
-import greedy_goal_3rb_sac # 探索手法
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
-
-import os
-import torch
-import pfrl
-import net_goal_3rb_sac  # net_goal_3rb_sacのインポート
 
 class ReinforceAgent():
     def __init__(self):
@@ -62,24 +27,29 @@ class ReinforceAgent():
         self.current_dirPath = os.path.dirname(os.path.realpath(__file__))  # カレントディレクトリのパス
         self.dirPath = self.current_dirPath.replace('/nodes', '/save_model')
         
-        self.gpu = 0  # GPUを使用
+        self.gpu = 0  # GPUを使用する場合は0に設定、GPUがない場合は-1
+        action_dim = 2  # 直進速度と回転速度の2つの出力
+        action_space = np.array([-1.0, 1.0, -math.pi, math.pi])
+        
+        # GPUを使用するかどうかを決定
+        device = torch.device('cuda' if torch.cuda.is_available() and self.gpu != -1 else 'cpu')
         
         # アクターネットワーク（ポリシーネットワーク）
         self.policy = net_goal_3rb_sac.PolicyNetwork(
             state_dim=3,
-            action_dim=3
-        )
+            action_dim=action_dim
+        ).to(device)  # GPUデバイスにモデルを転送
         
         # クリティックネットワーク（Q関数）
         self.q_func1 = net_goal_3rb_sac.QFunction(
             state_dim=3,
-            action_dim=3
-        )
+            action_dim=action_dim
+        ).to(device)  # GPUデバイスにモデルを転送
         
         self.q_func2 = net_goal_3rb_sac.QFunction(
             state_dim=3,
-            action_dim=3
-        )
+            action_dim=action_dim
+        ).to(device)  # GPUデバイスにモデルを転送
         
         # 最適化アルゴリズム
         self.policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=3e-4)
@@ -90,7 +60,7 @@ class ReinforceAgent():
         self.rbuf = pfrl.replay_buffers.ReplayBuffer(capacity=10**6)  # ReplayBufferのインスタンス作成
         
         # SACエージェントの作成
-        agent = pfrl.agents.SoftActorCritic(
+        self.model = pfrl.agents.SoftActorCritic(
             policy=self.policy,  # 定義したpolicyモデルを渡します
             q_func1=self.q_func1,  # 定義したq_func1を渡します
             q_func2=self.q_func2,  # 定義したq_func2を渡します
@@ -112,10 +82,100 @@ class ReinforceAgent():
             entropy_target=None,  # エントロピーターゲット（必要に応じて設定）
             temperature_optimizer_lr=None,  # 温度最適化の学習率
             act_deterministically=True,  # 決定的に行動するかどうか
+            gpu=self.gpu  # 使用するGPUを整数で指定
         )
+    
+    def train(self):
 
+        # 使用するモデルのロード
+        if self.load_model:
+            self.model.load(self.dirPath + '/load_model/robot_' + str(self.robot_n))
+        if self.load_rbuf:
+            self.rbuf.load(self.dirPath + '/load_model/robot_' + str(self.robot_n) + '/replay_buffer')
+        
+        start_time = time.time() # 学習開始時間の取得
+
+        if self.mode == 'sim':
+            env.set_robot(0) # 初期位置に配置
+
+        if self.robot_n in self.screen_list:
+            print('start train (robot' + str(self.robot_n) + ')')
+        
+        old_score = []
+        old_collisions = []
+        r_just_list = []
+        color_list = []
+
+        collision = False
+
+        for e in range(1, self.episode + 1):
+
+            state = env.reset()
+            state = torch.from_numpy(state).float()
+
+            score = 0
+            collisions = 0
+            color_count = 0
+            r_just_count = 0
+
+            turning_num = 0
+
+            for t in range(1, self.episode_step + 1):
+                
+                action = self.model.act(state) # モデルに状態を渡して取るべき行動を算出
+
+                ##### shielding(リカバリー方策) #####
+                if self.recovery and t >= 2:
+                    if color_num < 50:
+                        action = env.recovery_change_action(e, self.lidar_num, action, state, self.model.model) # LiDARの数値が低い方向への行動を避ける
+                    pass
+                #####################################
+
+                next_state, reward, color_num, just_count, collision, _ = env.step(action, test=False) # 行動、状態の観測、報酬の一連の処理
+                next_state = torch.from_numpy(next_state).float()
+                self.model.observe(next_state, reward, collision, reset=False) # モデルの更新
+                self.model.update()
+
+                r_just_count += just_count
+                color_count += color_num
+                score += reward
+                state = next_state
+
+                if action in [3, 4]:
+                    turning_num += 1
+
+                # 衝突時の処理
+                if collision:
+                    collisions += 1
+                    collision = False
+                
+                # エピソードの最後の処理
+                if t == self.episode_step:
+
+                    # 秒、分、時間の取得
+                    m, s = divmod(int(time.time() - start_time), 60)
+                    h, m = divmod(m, 60)
+
+                    # 結果の出力
+                    if self.robot_n in self.screen_list:
+                        print('Ep: {} score: {:.2f} collision: {} goal: {} time: {}:{:02d}:{:02d}'.format(
+                              e, score, collisions, r_just_count, h, m, s))
+                    
+                    # 各結果をリストへ格納
+                    old_score.append(score)
+                    old_collisions.append(collisions)
+                    r_just_list.append(r_just_count)
+                    color_list.append(color_count)
+
+                    break
+            
+            # モデルの保存
+            if self.save_rbuf:
+                self.rbuf.save(self.dirPath + '/TRIAL' + str(trials) + '/episode' + str(e) + '/robot_' + str(self.robot_n) + '/replay_buffer') # リプレイバッファの保存
+            self.model.save(self.dirPath + '/TRIAL' + str(trials) + '/episode' + str(e) + '/robot_' + str(self.robot_n)) # モデルの保存
 
 # メイン
 if __name__ == '__main__':
     rospy.init_node('main_goal_3rb')
     agent = ReinforceAgent()
+    agent.train()
