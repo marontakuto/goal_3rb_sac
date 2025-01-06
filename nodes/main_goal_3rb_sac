@@ -149,7 +149,6 @@ class ReinforceAgent():
         self.screen_list = [0]
         self.gpu = 0  # GPUを使用する場合は0に設定、GPUがない場合は-1
         action_dim = 2  # 直進速度と回転速度の2つの出力
-        action_space = np.array([-1.0, 1.0, -math.pi, math.pi])
 
         self.robot_n = rospy.get_param('robot_num')
         
@@ -157,18 +156,18 @@ class ReinforceAgent():
         device = torch.device('cuda' if torch.cuda.is_available() and self.gpu != -1 else 'cpu')
         
         # アクターネットワーク（ポリシーネットワーク）
-        self.policy = net_goal_3rb_sac.PolicyNetwork(
+        self.policy = net_goal_3rb_sac.SAC_Policy(
             state_dim=3,
             action_dim=action_dim
         ).to(device)  # GPUデバイスにモデルを転送
         
         # クリティックネットワーク（Q関数）
-        self.q_func1 = net_goal_3rb_sac.QFunction(
+        self.q_func1 = net_goal_3rb_sac.SAC_QFunc(
             state_dim=3,
             action_dim=action_dim
         ).to(device)  # GPUデバイスにモデルを転送
         
-        self.q_func2 = net_goal_3rb_sac.QFunction(
+        self.q_func2 = net_goal_3rb_sac.SAC_QFunc(
             state_dim=3,
             action_dim=action_dim
         ).to(device)  # GPUデバイスにモデルを転送
@@ -256,7 +255,6 @@ class ReinforceAgent():
                 next_state, reward, color_num, just_count, collision, _ = env.step(action, test=False) # 行動、状態の観測、報酬の一連の処理
                 next_state = torch.from_numpy(next_state).float()
                 self.model.observe(next_state, reward, collision, reset=False) # モデルの更新
-                self.model.update()
 
                 r_just_count += just_count
                 color_count += color_num
